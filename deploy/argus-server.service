@@ -1,0 +1,19 @@
+[Unit]
+Description=Argus C2 Server
+After=network.target
+
+[Service]
+Type=simple
+User=argus
+WorkingDirectory=/opt/argus
+EnvironmentFile=/opt/argus/.env
+ExecStart=/opt/argus/server --addr :8080
+Restart=always
+RestartSec=5
+# Prevent the process from writing core dumps (reduces forensic artifacts)
+LimitCORE=0
+# Restrict filesystem write access
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

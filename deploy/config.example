@@ -1,0 +1,7 @@
+# Copy to deploy/config and fill in your values before running any deploy script.
+DOMAIN=your-domain-here.com
+ROOT_DOMAIN=your-domain.com.        # trailing dot required for Route 53
+EMAIL=your-email@example.com        # used by certbot for TLS cert notifications
+REGION=us-east-1
+KEY_NAME=argus-c2
+INSTANCE_TYPE=t3.micro

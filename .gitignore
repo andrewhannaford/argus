@@ -1,0 +1,20 @@
+# Compiled binaries (except dist/ release builds)
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+/bin/
+
+# Go toolchain
+vendor/
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Logs / output
+*.log
+*.txt
