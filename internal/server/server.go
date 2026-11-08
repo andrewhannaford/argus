@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ type operator struct {
 type Server struct {
 	agentToken       string
 	operatorPassword string
+	agentsFile       string
 	agents           map[string]*agent
 	operators        map[*operator]struct{}
 	mu               sync.RWMutex
@@ -48,10 +50,11 @@ type Server struct {
 	limiter          *authLimiter
 }
 
-func New(agentToken, operatorPassword string) *Server {
+func New(agentToken, operatorPassword, agentsFile string) *Server {
 	return &Server{
 		agentToken:       agentToken,
 		operatorPassword: operatorPassword,
+		agentsFile:       agentsFile,
 		agents:           make(map[string]*agent),
 		operators:        make(map[*operator]struct{}),
 		upgrader:         websocket.Upgrader{CheckOrigin: checkOrigin},
@@ -95,6 +98,31 @@ func passwordMatches(submitted, stored string) bool {
 		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(submitted)) == nil
 	}
 	return secureEqual(submitted, stored)
+}
+
+// agentAllowed accepts a per-agent token from the agents file, or the legacy
+// shared token as a fallback for IDs not present in the file.
+func (s *Server) agentAllowed(id, token string) bool {
+	if s.agentsFile != "" {
+		if t, ok := loadAgentToken(s.agentsFile, id); ok {
+			return secureEqual(token, t)
+		}
+	}
+	return s.agentToken != "" && secureEqual(token, s.agentToken)
+}
+
+func loadAgentToken(path, id string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		log.Printf("[agents] failed to parse %s: %v", path, err)
+		return "", false
+	}
+	t, ok := m[id]
+	return t, ok
 }
 
 type authFailure struct {
@@ -195,7 +223,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "protocol version mismatch"})
 		return
 	}
-	if !secureEqual(auth.Token, s.agentToken) {
+	if !s.agentAllowed(auth.AgentID, auth.Token) {
 		s.limiter.recordFail(key)
 		time.Sleep(authFailDelay)
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid token"})

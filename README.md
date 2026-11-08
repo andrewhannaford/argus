@@ -189,3 +189,21 @@ the Traefik `dynamic_conf/`) and is protected by the agent token only.
 
 `.env` is not committed (it's gitignored). `cmd/hashpw` is a small helper for
 generating (and rotating) the operator password hash.
+
+## Agent tokens
+
+Each agent should have its own token. Tokens live in `agents.json` (mounted
+read-only into the container), mapping agent IDs to tokens:
+
+```json
+{"target-dc01": "aabbcc...", "target-web": "ddeeff..."}
+```
+
+- Generate a token: `go run ./cmd/gentoken` (256-bit, hex).
+- Install the agent with `--id <id> --token <token>` matching an entry above.
+- The server re-reads `agents.json` on every auth, so **revocation is instant**:
+  delete an entry (or replace the file) and that agent's next reconnect fails.
+
+`ARGUS_AGENT_TOKEN` (in `.env`) is a **legacy fallback** used only for agent IDs
+*not* present in `agents.json`. Once every agent has its own token, set
+`ARGUS_AGENT_TOKEN` to empty to disable the shared fallback entirely.

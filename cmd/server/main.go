@@ -16,8 +16,9 @@ var webFS embed.FS
 
 func main() {
 	addr := flag.String("addr", ":8080", "Listen address")
-	agentToken := flag.String("agent-token", os.Getenv("AGENT_TOKEN"), "Token agents use to authenticate")
+	agentToken := flag.String("agent-token", os.Getenv("AGENT_TOKEN"), "Legacy shared agent token (fallback)")
 	operatorPw := flag.String("operator-password", os.Getenv("OPERATOR_PASSWORD"), "Operator web UI password")
+	agentsFile := flag.String("agents-file", os.Getenv("AGENTS_FILE"), "JSON file mapping agent IDs to per-agent tokens")
 	flag.Parse()
 
 	if *agentToken == "" || *operatorPw == "" {
@@ -32,7 +33,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srv := server.New(*agentToken, *operatorPw)
+	srv := server.New(*agentToken, *operatorPw, *agentsFile)
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux, sub)
 

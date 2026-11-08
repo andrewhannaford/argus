@@ -9,6 +9,9 @@ services:
     environment:
       AGENT_TOKEN: ${ARGUS_AGENT_TOKEN}
       OPERATOR_PASSWORD: ${ARGUS_OPERATOR_PASSWORD}
+      AGENTS_FILE: /etc/argus/agents.json
+    volumes:
+      - /opt/docker/services/argus/agents.json:/etc/argus/agents.json:ro
     networks: [traefik-net]
     read_only: true
     cap_drop: [ALL]
