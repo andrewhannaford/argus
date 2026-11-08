@@ -1,15 +1,20 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"argus/internal/protocol"
+	"github.com/gorilla/websocket"
 )
 
 type agent struct {
@@ -31,6 +36,7 @@ type Server struct {
 	agents           map[string]*agent
 	mu               sync.RWMutex
 	upgrader         websocket.Upgrader
+	limiter          *authLimiter
 }
 
 func New(agentToken, operatorPassword string) *Server {
@@ -38,8 +44,98 @@ func New(agentToken, operatorPassword string) *Server {
 		agentToken:       agentToken,
 		operatorPassword: operatorPassword,
 		agents:           make(map[string]*agent),
-		upgrader:         websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		upgrader:         websocket.Upgrader{CheckOrigin: checkOrigin},
+		limiter:          newAuthLimiter(),
 	}
+}
+
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients (the agent) send no Origin header.
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host == r.Host
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func secureEqual(a, b string) bool {
+	ah := sha256.Sum256([]byte(a))
+	bh := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ah[:], bh[:]) == 1
+}
+
+type authFailure struct {
+	count       int
+	lockedUntil time.Time
+}
+
+type authLimiter struct {
+	mu       sync.Mutex
+	failures map[string]*authFailure
+}
+
+const (
+	authMaxFailures = 5
+	authLockBase    = 30 * time.Second
+	authLockMax     = 15 * time.Minute
+	authFailDelay   = 250 * time.Millisecond
+)
+
+func newAuthLimiter() *authLimiter {
+	return &authLimiter{failures: make(map[string]*authFailure)}
+}
+
+func (l *authLimiter) locked(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	f := l.failures[key]
+	if f == nil || f.lockedUntil.IsZero() {
+		return false
+	}
+	if time.Now().After(f.lockedUntil) {
+		delete(l.failures, key)
+		return false
+	}
+	return true
+}
+
+func (l *authLimiter) recordFail(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	f := l.failures[key]
+	if f == nil {
+		f = &authFailure{}
+		l.failures[key] = f
+	}
+	f.count++
+	if f.count >= authMaxFailures {
+		d := authLockBase << uint(f.count-authMaxFailures)
+		if d > authLockMax {
+			d = authLockMax
+		}
+		f.lockedUntil = time.Now().Add(d)
+	}
+}
+
+func (l *authLimiter) recordSuccess(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.failures, key)
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux, webFiles fs.FS) {
@@ -54,6 +150,11 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	key := clientIP(r)
+	if s.limiter.locked(key) {
+		return
+	}
 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, raw, err := conn.ReadMessage()
@@ -71,10 +172,13 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(msg.Data, &auth); err != nil {
 		return
 	}
-	if auth.Token != s.agentToken {
+	if !secureEqual(auth.Token, s.agentToken) {
+		s.limiter.recordFail(key)
+		time.Sleep(authFailDelay)
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid token"})
 		return
 	}
+	s.limiter.recordSuccess(key)
 
 	a := &agent{
 		info: protocol.AgentInfo{ID: auth.AgentID, Hostname: auth.Hostname, OS: auth.OS},
@@ -130,6 +234,11 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	key := clientIP(r)
+	if s.limiter.locked(key) {
+		return
+	}
+
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -146,10 +255,13 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(msg.Data, &auth); err != nil {
 		return
 	}
-	if auth.Password != s.operatorPassword {
+	if !secureEqual(auth.Password, s.operatorPassword) {
+		s.limiter.recordFail(key)
+		time.Sleep(authFailDelay)
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid password"})
 		return
 	}
+	s.limiter.recordSuccess(key)
 
 	op := &operator{conn: conn}
 	writeMsg(conn, protocol.MsgAuthOK, nil)

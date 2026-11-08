@@ -23,6 +23,12 @@ func main() {
 	if *agentToken == "" || *operatorPw == "" {
 		log.Fatal("--agent-token and --operator-password are required (or set AGENT_TOKEN / OPERATOR_PASSWORD env vars)")
 	}
+	if len(*agentToken) < 32 {
+		log.Fatalf("AGENT_TOKEN must be at least 32 bytes (got %d)", len(*agentToken))
+	}
+	if len(*operatorPw) < 12 {
+		log.Fatalf("OPERATOR_PASSWORD must be at least 12 characters (got %d)", len(*operatorPw))
+	}
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {

@@ -213,16 +213,34 @@ function showError(text) {
 
 function renderAgentList(agents) {
   const list = document.getElementById('agent-list');
+  list.textContent = '';
   if (!agents.length) {
-    list.innerHTML = '<div style="padding:12px;color:#8b949e;font-size:13px;">No agents connected.</div>';
+    const empty = document.createElement('div');
+    empty.style.cssText = 'padding:12px;color:#8b949e;font-size:13px;';
+    empty.textContent = 'No agents connected.';
+    list.appendChild(empty);
     return;
   }
-  list.innerHTML = agents.map(a => `
-    <div class="agent-item ${selectedAgent === a.id ? 'active' : ''}" onclick="selectAgent('${a.id}', '${a.hostname}', '${a.os}')">
-      <div class="agent-hostname"><span class="dot"></span>${a.hostname}</div>
-      <div class="agent-os">${a.os} · ${a.id.substring(0,8)}</div>
-    </div>
-  `).join('');
+  for (const a of agents) {
+    const item = document.createElement('div');
+    item.className = 'agent-item' + (selectedAgent === a.id ? ' active' : '');
+    item.addEventListener('click', () => selectAgent(a.id, a.hostname, a.os));
+
+    const host = document.createElement('div');
+    host.className = 'agent-hostname';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    host.appendChild(dot);
+    host.appendChild(document.createTextNode(a.hostname));
+
+    const os = document.createElement('div');
+    os.className = 'agent-os';
+    os.textContent = a.os + ' · ' + a.id.substring(0, 8);
+
+    item.appendChild(host);
+    item.appendChild(os);
+    list.appendChild(item);
+  }
 }
 
 function selectAgent(id, hostname, os) {
