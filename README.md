@@ -2,7 +2,7 @@
 
 C2 framework with WebSocket agent — shell, screenshot, and camera capture. Agents install as persistent system services and resist termination.
 
-**Server:** Docker container on the homelab (`docker-svc`) behind Traefik + Pocket ID OIDC
+**Server:** Docker container on the homelab (`docker-svc`) — operator UI behind Pocket ID OIDC, `/ws/agent` token-only
 **Operator UI:** `https://argus.lanarchy.net` (login with the operator password)
 
 ---
@@ -154,8 +154,10 @@ GOOS=darwin  GOARCH=arm64 go build -ldflags "-s -w" -o dist/agent-darwin-arm64 .
 ## Server Deployment
 
 The server runs on the homelab docker host (`docker-svc`) as its own Compose
-project, built from the repo `Dockerfile` and served through Traefik + Pocket ID
-OIDC at `argus.lanarchy.net`. Traefik labels live in `docker-compose.yml`.
+project, built from the repo `Dockerfile` and served through Traefik at
+`argus.lanarchy.net`. Traefik labels live in `docker-compose.yml`. The operator
+UI is gated by Pocket ID OIDC; `/ws/agent` bypasses OIDC (a dedicated router in
+the Traefik `dynamic_conf/`) and is protected by the agent token only.
 
 1. Put the source plus `Dockerfile`, `docker-compose.yml` and a real `.env` in
    `/opt/docker/services/argus/` on `docker-svc` (see `.env.example` for the two
