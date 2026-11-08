@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"argus/internal/protocol"
@@ -18,6 +19,13 @@ const (
 	pongWait       = 60 * time.Second
 	maxMessageSize = 32 << 20
 )
+
+const (
+	chunkThreshold = 1 << 20
+	chunkSize      = 512 << 10
+)
+
+var chunkCounter atomic.Int64
 
 type Agent struct {
 	serverURL string
@@ -187,10 +195,17 @@ func (a *Agent) handle(m protocol.Message) {
 		if a.camera != nil {
 			a.camera.Stop()
 		}
+		device := ""
+		quality := 0
+		var req protocol.CameraStartMsg
+		if json.Unmarshal(m.Data, &req) == nil {
+			device = req.Device
+			quality = req.Quality
+		}
 		a.camera = NewCamera(func(frame string) {
 			a.send(protocol.MsgCameraFrame, protocol.CameraFrameMsg{Image: frame})
 		})
-		go a.camera.Start()
+		go a.camera.Start(device, quality)
 
 	case protocol.MsgCameraStop:
 		if a.camera != nil {
@@ -201,9 +216,46 @@ func (a *Agent) handle(m protocol.Message) {
 }
 
 func (a *Agent) send(t protocol.MsgType, data interface{}) error {
-	raw, _ := json.Marshal(data)
-	b, _ := json.Marshal(protocol.Message{Type: t, Data: raw})
+	msg := protocol.Message{Type: t}
+	if data != nil {
+		raw, _ := json.Marshal(data)
+		msg.Data = raw
+	}
+	b, _ := json.Marshal(msg)
+	if len(b) <= chunkThreshold || t == protocol.MsgChunk {
+		return a.writeRaw(b)
+	}
+	return a.sendChunked(t, b)
+}
+
+func (a *Agent) writeRaw(b []byte) error {
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
 	return a.conn.WriteMessage(websocket.TextMessage, b)
+}
+
+func (a *Agent) sendChunked(t protocol.MsgType, full []byte) error {
+	stream := fmt.Sprintf("s%d", chunkCounter.Add(1))
+	for _, c := range splitChunks(stream, t, string(full)) {
+		raw, _ := json.Marshal(c)
+		b, _ := json.Marshal(protocol.Message{Type: protocol.MsgChunk, Data: raw})
+		if err := a.writeRaw(b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitChunks(stream string, t protocol.MsgType, payload string) []protocol.ChunkMsg {
+	total := (len(payload) + chunkSize - 1) / chunkSize
+	chunks := make([]protocol.ChunkMsg, 0, total)
+	for i := 0; i < total; i++ {
+		lo := i * chunkSize
+		hi := lo + chunkSize
+		if hi > len(payload) {
+			hi = len(payload)
+		}
+		chunks = append(chunks, protocol.ChunkMsg{Stream: stream, Type: t, Index: i, Total: total, Data: payload[lo:hi]})
+	}
+	return chunks
 }

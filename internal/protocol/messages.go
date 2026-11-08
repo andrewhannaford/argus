@@ -25,6 +25,8 @@ const (
 	MsgCameraStop  MsgType = "camera_stop"
 	MsgCameraFrame MsgType = "camera_frame"
 
+	MsgChunk MsgType = "chunk"
+
 	MsgPing  MsgType = "ping"
 	MsgPong  MsgType = "pong"
 	MsgError MsgType = "error"
@@ -83,8 +85,22 @@ type ScreenshotDataMsg struct {
 	Image string `json:"image"` // base64 PNG
 }
 
+type CameraStartMsg struct {
+	Device  string `json:"device,omitempty"`
+	Quality int    `json:"quality,omitempty"`
+}
+
 type CameraFrameMsg struct {
 	Image string `json:"image"` // base64 JPEG
+}
+
+// ChunkMsg carries one slice of a large payload split for transport.
+type ChunkMsg struct {
+	Stream string  `json:"stream"`
+	Type   MsgType `json:"type"`
+	Index  int     `json:"index"`
+	Total  int     `json:"total"`
+	Data   string  `json:"data"`
 }
 
 type ErrorMsg struct {

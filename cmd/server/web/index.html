@@ -116,9 +116,15 @@
         <div class="panel" id="camera-panel">
           <div id="camera-status">Camera not started.</div>
           <img id="camera-img" alt="Camera">
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="btn" onclick="startCamera()">Start Camera</button>
             <button class="btn danger" onclick="stopCamera()">Stop Camera</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b949e;">
+              Device <input id="camera-device" type="text" placeholder="auto" style="width:140px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:4px 8px;">
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b949e;">
+              Quality <input id="camera-quality" type="number" min="0" max="31" value="5" style="width:60px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:4px 8px;">
+            </label>
           </div>
         </div>
       </div>
@@ -134,6 +140,7 @@ const MSG = {
   SHELL_START: 'shell_start', SHELL_INPUT: 'shell_input', SHELL_OUTPUT: 'shell_output', SHELL_RESIZE: 'shell_resize',
   SCREENSHOT_REQ: 'screenshot_req', SCREENSHOT_DATA: 'screenshot_data',
   CAMERA_START: 'camera_start', CAMERA_STOP: 'camera_stop', CAMERA_FRAME: 'camera_frame',
+  CHUNK: 'chunk',
   ERROR: 'error',
 };
 
@@ -143,6 +150,7 @@ let fitAddon = null;
 let selectedAgent = null;
 let cameraRunning = false;
 let shellStarted = false;
+const chunkBuffer = new Map();
 
 function send(type, data) {
   ws.send(JSON.stringify({ type, data: data ?? null }));
@@ -197,9 +205,25 @@ function handleMessage(msg) {
         document.getElementById('camera-status').style.display = 'none';
       }
       break;
+    case MSG.CHUNK:
+      handleChunk(msg.data);
+      break;
     case MSG.ERROR:
       showError(msg.data ? msg.data.message : 'Unknown error');
       break;
+  }
+}
+
+function handleChunk(chunk) {
+  let buf = chunkBuffer.get(chunk.stream);
+  if (!buf) {
+    buf = { type: chunk.type, total: chunk.total, parts: new Array(chunk.total) };
+    chunkBuffer.set(chunk.stream, buf);
+  }
+  buf.parts[chunk.index] = chunk.data;
+  if (buf.parts.every(p => p !== undefined)) {
+    chunkBuffer.delete(chunk.stream);
+    handleMessage(JSON.parse(buf.parts.join('')));
   }
 }
 
@@ -330,7 +354,9 @@ function startCamera() {
   document.getElementById('camera-status').textContent = 'Starting camera...';
   document.getElementById('camera-status').style.display = 'block';
   document.getElementById('camera-img').style.display = 'none';
-  send(MSG.CAMERA_START, null);
+  const device = document.getElementById('camera-device').value.trim();
+  const quality = parseInt(document.getElementById('camera-quality').value, 10) || 0;
+  send(MSG.CAMERA_START, { device, quality });
 }
 
 function stopCamera() {

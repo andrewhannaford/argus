@@ -3,6 +3,7 @@ module argus
 go 1.26.0
 
 require (
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.21
 	github.com/gorilla/websocket v1.5.3
 	github.com/kbinani/screenshot v0.0.0-20230812210009-b87d31814237

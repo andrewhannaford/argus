@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/base64"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,9 +17,9 @@ func NewCamera(onFrame func(string)) *Camera {
 	return &Camera{onFrame: onFrame, stop: make(chan struct{})}
 }
 
-func (c *Camera) Start() {
+func (c *Camera) Start(device string, quality int) {
 	winDevice := ""
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && device == "" {
 		winDevice = windowsCameraDevice()
 	}
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -28,7 +29,7 @@ func (c *Camera) Start() {
 		case <-c.stop:
 			return
 		case <-ticker.C:
-			frame, err := captureFrame(winDevice)
+			frame, err := captureFrame(winDevice, device, quality)
 			if err != nil {
 				continue
 			}
@@ -45,9 +46,8 @@ func (c *Camera) Stop() {
 	}
 }
 
-func captureFrame(winDevice string) (string, error) {
-	args := cameraArgs(winDevice)
-	cmd := newCommand("ffmpeg", args...)
+func captureFrame(winDevice, device string, quality int) (string, error) {
+	cmd := newCommand("ffmpeg", cameraArgs(winDevice, device, quality)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -55,15 +55,31 @@ func captureFrame(winDevice string) (string, error) {
 	return base64.StdEncoding.EncodeToString(out), nil
 }
 
-func cameraArgs(winDevice string) []string {
-	base := []string{"-loglevel", "quiet", "-vframes", "1", "-f", "image2", "-vcodec", "mjpeg", "pipe:1"}
+func cameraArgs(winDevice, device string, quality int) []string {
+	base := []string{"-loglevel", "quiet", "-vframes", "1", "-f", "image2", "-vcodec", "mjpeg"}
+	if quality > 0 {
+		base = append(base, "-q:v", strconv.Itoa(quality))
+	}
+	base = append(base, "pipe:1")
 	switch runtime.GOOS {
 	case "windows":
-		return append([]string{"-f", "dshow", "-i", "video=" + winDevice}, base...)
+		d := device
+		if d == "" {
+			d = winDevice
+		}
+		return append([]string{"-f", "dshow", "-i", "video=" + d}, base...)
 	case "linux":
-		return append([]string{"-f", "v4l2", "-i", "/dev/video0"}, base...)
+		d := device
+		if d == "" {
+			d = "/dev/video0"
+		}
+		return append([]string{"-f", "v4l2", "-i", d}, base...)
 	default: // darwin
-		return append([]string{"-f", "avfoundation", "-framerate", "30", "-i", "0"}, base...)
+		d := device
+		if d == "" {
+			d = "0"
+		}
+		return append([]string{"-f", "avfoundation", "-framerate", "30", "-i", d}, base...)
 	}
 }
 
