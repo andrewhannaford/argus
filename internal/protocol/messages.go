@@ -30,6 +30,10 @@ const (
 	MsgError MsgType = "error"
 )
 
+// ProtocolVersion is checked by both sides at auth so a server/agent mismatch
+// fails loudly instead of silently.
+const ProtocolVersion = 1
+
 type Message struct {
 	Type MsgType         `json:"type"`
 	Data json.RawMessage `json:"data,omitempty"`
@@ -42,6 +46,7 @@ type AgentInfo struct {
 }
 
 type AgentAuthMsg struct {
+	Version  int    `json:"version"`
 	Token    string `json:"token"`
 	AgentID  string `json:"agent_id"`
 	Hostname string `json:"hostname"`
@@ -49,6 +54,7 @@ type AgentAuthMsg struct {
 }
 
 type OperatorAuthMsg struct {
+	Version  int    `json:"version"`
 	Password string `json:"password"`
 }
 
@@ -67,6 +73,10 @@ type ShellOutputMsg struct {
 type ShellResizeMsg struct {
 	Cols uint16 `json:"cols"`
 	Rows uint16 `json:"rows"`
+}
+
+type ScreenshotReqMsg struct {
+	Display int `json:"display,omitempty"`
 }
 
 type ScreenshotDataMsg struct {

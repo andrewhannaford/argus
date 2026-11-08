@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Argus</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzBhMGMxMCIvPjxwYXRoIGQ9Ik00IDE2QzQgMTYgOSA5IDE2IDlzMTIgNyAxMiA3LTUgNy0xMiA3UzQgMTYgNCAxNnoiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzRmOGVmNyIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNCIgZmlsbD0iIzRmOGVmNyIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjIiIGZpbGw9IiMwYTBjMTAiLz48L3N2Zz4=">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<link rel="stylesheet" href="/vendor/xterm.min.css">
+<script src="/vendor/xterm.min.js"></script>
+<script src="/vendor/xterm-addon-fit.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -104,7 +104,12 @@
           <div id="terminal-container"></div>
         </div>
         <div class="panel" id="screenshot-panel">
-          <button class="btn" onclick="takeScreenshot()">Capture Screenshot</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn" onclick="takeScreenshot()">Capture Screenshot</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b949e;">
+              Display <input id="screenshot-display" type="number" min="0" value="0" style="width:60px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:4px 8px;">
+            </label>
+          </div>
           <div id="screenshot-loading">Capturing...</div>
           <img id="screenshot-img" alt="Screenshot">
         </div>
@@ -148,7 +153,7 @@ function login() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/operator`);
 
-  ws.onopen = () => send(MSG.OPERATOR_AUTH, { password: pw });
+  ws.onopen = () => send(MSG.OPERATOR_AUTH, { version: 1, password: pw });
 
   ws.onmessage = e => handleMessage(JSON.parse(e.data));
 
@@ -309,7 +314,8 @@ function switchTab(name) {
 function takeScreenshot() {
   document.getElementById('screenshot-loading').style.display = 'block';
   document.getElementById('screenshot-img').style.display = 'none';
-  send(MSG.SCREENSHOT_REQ, null);
+  const display = parseInt(document.getElementById('screenshot-display').value, 10) || 0;
+  send(MSG.SCREENSHOT_REQ, { display });
 }
 
 function showScreenshot(b64) {

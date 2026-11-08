@@ -160,8 +160,24 @@ UI is gated by Pocket ID OIDC; `/ws/agent` bypasses OIDC (a dedicated router in
 the Traefik `dynamic_conf/`) and is protected by the agent token only.
 
 1. Put the source plus `Dockerfile`, `docker-compose.yml` and a real `.env` in
-   `/opt/docker/services/argus/` on `docker-svc` (see `.env.example` for the two
-   required secrets: `ARGUS_AGENT_TOKEN` and `ARGUS_OPERATOR_PASSWORD`).
+   `/opt/docker/services/argus/` on `docker-svc`. The two secrets are
+   `ARGUS_AGENT_TOKEN` (>= 32 random bytes) and `ARGUS_OPERATOR_PASSWORD`.
+
+   `ARGUS_OPERATOR_PASSWORD` is a **bcrypt hash**, not the plaintext. Generate it:
+
+   ```bash
+   echo 'your-password' | go run ./cmd/hashpw
+   ```
+
+   The hash contains `$`; in the `.env` file each `$` must be doubled (`$$`)
+   because Docker Compose interpolates `$VAR` in `.env` values:
+
+   ```
+   ARGUS_AGENT_TOKEN=...
+   ARGUS_OPERATOR_PASSWORD=$$2a$$10$$...
+   ```
+
+   The `$$` becomes a literal `$` inside the container.
 
 2. Build and start:
 
@@ -171,4 +187,5 @@ the Traefik `dynamic_conf/`) and is protected by the agent token only.
    docker compose up -d
    ```
 
-`.env` is not committed (it's gitignored).
+`.env` is not committed (it's gitignored). `cmd/hashpw` is a small helper for
+generating (and rotating) the operator password hash.

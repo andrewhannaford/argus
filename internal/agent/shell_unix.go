@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"io"
 	"os"
 	"os/exec"
 
@@ -41,9 +40,6 @@ func (s *Shell) Start() error {
 				s.onOutput(string(buf[:n]))
 			}
 			if err != nil {
-				if err != io.EOF {
-					return
-				}
 				return
 			}
 		}

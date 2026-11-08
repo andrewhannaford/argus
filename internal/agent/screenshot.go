@@ -8,8 +8,11 @@ import (
 	"github.com/kbinani/screenshot"
 )
 
-func captureScreenshot() (string, error) {
-	bounds := screenshot.GetDisplayBounds(0)
+func captureScreenshot(display int) (string, error) {
+	if display < 0 || display >= screenshot.NumActiveDisplays() {
+		display = 0
+	}
+	bounds := screenshot.GetDisplayBounds(display)
 	img, err := screenshot.CaptureRect(bounds)
 	if err != nil {
 		return "", err

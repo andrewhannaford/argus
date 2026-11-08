@@ -2,14 +2,21 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"runtime"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"argus/internal/protocol"
+	"github.com/gorilla/websocket"
+)
+
+const (
+	pingPeriod     = 30 * time.Second
+	pongWait       = 60 * time.Second
+	maxMessageSize = 32 << 20
 )
 
 type Agent struct {
@@ -57,23 +64,25 @@ func (a *Agent) Stop() {
 }
 
 func (a *Agent) connect(hostname string) error {
-	conn, _, err := websocket.DefaultDialer.Dial(a.serverURL+"/ws/agent", nil)
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	conn, _, err := dialer.Dial(a.serverURL+"/ws/agent", nil)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+
+	conn.SetReadLimit(maxMessageSize)
 
 	a.connMu.Lock()
 	a.conn = conn
 	a.connMu.Unlock()
 
 	if err := a.send(protocol.MsgAgentAuth, protocol.AgentAuthMsg{
-		Token: a.token, AgentID: a.id, Hostname: hostname, OS: runtime.GOOS,
+		Version: protocol.ProtocolVersion, Token: a.token, AgentID: a.id, Hostname: hostname, OS: runtime.GOOS,
 	}); err != nil {
 		return err
 	}
 
-	// Wait for auth_ok
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		return err
@@ -82,10 +91,39 @@ func (a *Agent) connect(hostname string) error {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return err
 	}
+	if msg.Type == protocol.MsgAuthFail {
+		var e protocol.ErrorMsg
+		if json.Unmarshal(msg.Data, &e) == nil {
+			return fmt.Errorf("authentication failed: %s", e.Message)
+		}
+		return fmt.Errorf("authentication failed")
+	}
 	if msg.Type != protocol.MsgAuthOK {
-		return nil
+		return fmt.Errorf("unexpected auth response: %s", msg.Type)
 	}
 	log.Printf("Connected to server as %s", a.id)
+
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(pingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				a.sendMu.Lock()
+				conn.WriteMessage(websocket.PingMessage, nil)
+				a.sendMu.Unlock()
+			}
+		}
+	}()
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -131,8 +169,13 @@ func (a *Agent) handle(m protocol.Message) {
 		}
 
 	case protocol.MsgScreenshotReq:
+		display := 0
+		var req protocol.ScreenshotReqMsg
+		if json.Unmarshal(m.Data, &req) == nil {
+			display = req.Display
+		}
 		go func() {
-			b64, err := captureScreenshot()
+			b64, err := captureScreenshot(display)
 			if err != nil {
 				log.Printf("screenshot error: %v", err)
 				return

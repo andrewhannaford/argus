@@ -15,6 +15,13 @@ import (
 
 	"argus/internal/protocol"
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	pingPeriod     = 30 * time.Second
+	pongWait       = 60 * time.Second
+	maxMessageSize = 32 << 20
 )
 
 type agent struct {
@@ -28,12 +35,14 @@ type operator struct {
 	conn  *websocket.Conn
 	mu    sync.Mutex
 	agent *agent
+	ip    string
 }
 
 type Server struct {
 	agentToken       string
 	operatorPassword string
 	agents           map[string]*agent
+	operators        map[*operator]struct{}
 	mu               sync.RWMutex
 	upgrader         websocket.Upgrader
 	limiter          *authLimiter
@@ -44,6 +53,7 @@ func New(agentToken, operatorPassword string) *Server {
 		agentToken:       agentToken,
 		operatorPassword: operatorPassword,
 		agents:           make(map[string]*agent),
+		operators:        make(map[*operator]struct{}),
 		upgrader:         websocket.Upgrader{CheckOrigin: checkOrigin},
 		limiter:          newAuthLimiter(),
 	}
@@ -77,6 +87,14 @@ func secureEqual(a, b string) bool {
 	ah := sha256.Sum256([]byte(a))
 	bh := sha256.Sum256([]byte(b))
 	return subtle.ConstantTimeCompare(ah[:], bh[:]) == 1
+}
+
+// passwordMatches accepts a bcrypt hash (preferred) or a legacy plaintext value.
+func passwordMatches(submitted, stored string) bool {
+	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(submitted)) == nil
+	}
+	return secureEqual(submitted, stored)
 }
 
 type authFailure struct {
@@ -150,6 +168,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxMessageSize)
 
 	key := clientIP(r)
 	if s.limiter.locked(key) {
@@ -172,10 +191,18 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(msg.Data, &auth); err != nil {
 		return
 	}
+	if auth.Version != protocol.ProtocolVersion {
+		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "protocol version mismatch"})
+		return
+	}
 	if !secureEqual(auth.Token, s.agentToken) {
 		s.limiter.recordFail(key)
 		time.Sleep(authFailDelay)
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid token"})
+		return
+	}
+	if len(auth.AgentID) > 128 || len(auth.Hostname) > 256 || len(auth.OS) > 32 {
+		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid agent info"})
 		return
 	}
 	s.limiter.recordSuccess(key)
@@ -186,15 +213,44 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
+	if old, ok := s.agents[a.info.ID]; ok && old != a {
+		old.conn.Close()
+	}
 	s.agents[a.info.ID] = a
 	s.mu.Unlock()
 
 	log.Printf("[agent] connected: %s (%s / %s)", a.info.ID, a.info.Hostname, a.info.OS)
 	writeMsg(conn, protocol.MsgAuthOK, nil)
+	s.broadcastAgentList()
+
+	done := make(chan struct{})
+	defer close(done)
+
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+	go func() {
+		ticker := time.NewTicker(pingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				a.mu.Lock()
+				conn.WriteMessage(websocket.PingMessage, nil)
+				a.mu.Unlock()
+			}
+		}
+	}()
 
 	defer func() {
 		s.mu.Lock()
-		delete(s.agents, a.info.ID)
+		if s.agents[a.info.ID] == a {
+			delete(s.agents, a.info.ID)
+		}
 		s.mu.Unlock()
 
 		a.mu.Lock()
@@ -207,6 +263,7 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 			writeMsg(op.conn, protocol.MsgError, protocol.ErrorMsg{Message: "agent disconnected"})
 		}
 		log.Printf("[agent] disconnected: %s", a.info.ID)
+		s.broadcastAgentList()
 	}()
 
 	for {
@@ -233,6 +290,7 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxMessageSize)
 
 	key := clientIP(r)
 	if s.limiter.locked(key) {
@@ -255,7 +313,11 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(msg.Data, &auth); err != nil {
 		return
 	}
-	if !secureEqual(auth.Password, s.operatorPassword) {
+	if auth.Version != protocol.ProtocolVersion {
+		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "protocol version mismatch"})
+		return
+	}
+	if !passwordMatches(auth.Password, s.operatorPassword) {
 		s.limiter.recordFail(key)
 		time.Sleep(authFailDelay)
 		writeMsg(conn, protocol.MsgAuthFail, protocol.ErrorMsg{Message: "invalid password"})
@@ -263,12 +325,43 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	s.limiter.recordSuccess(key)
 
-	op := &operator{conn: conn}
+	op := &operator{conn: conn, ip: key}
 	writeMsg(conn, protocol.MsgAuthOK, nil)
-	log.Printf("[operator] connected")
+	log.Printf("[operator] connected from %s", key)
 	s.sendAgentList(op)
 
+	s.mu.Lock()
+	s.operators[op] = struct{}{}
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	defer close(done)
+
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+	go func() {
+		ticker := time.NewTicker(pingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				op.mu.Lock()
+				conn.WriteMessage(websocket.PingMessage, nil)
+				op.mu.Unlock()
+			}
+		}
+	}()
+
 	defer func() {
+		s.mu.Lock()
+		delete(s.operators, op)
+		s.mu.Unlock()
+
 		op.mu.Lock()
 		a := op.agent
 		op.mu.Unlock()
@@ -277,7 +370,7 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 			a.operator = nil
 			a.mu.Unlock()
 		}
-		log.Printf("[operator] disconnected")
+		log.Printf("[operator] disconnected from %s", key)
 	}()
 
 	for {
@@ -320,17 +413,41 @@ func (s *Server) handleOperator(w http.ResponseWriter, r *http.Request) {
 			a.mu.Lock()
 			a.operator = op
 			a.mu.Unlock()
+			log.Printf("[audit] %s selected agent %s", op.ip, a.info.ID)
 
 		default:
 			op.mu.Lock()
 			a := op.agent
 			op.mu.Unlock()
 			if a != nil {
+				switch m.Type {
+				case protocol.MsgShellStart:
+					log.Printf("[audit] %s started shell on agent %s", op.ip, a.info.ID)
+				case protocol.MsgScreenshotReq:
+					log.Printf("[audit] %s requested screenshot on agent %s", op.ip, a.info.ID)
+				case protocol.MsgCameraStart:
+					log.Printf("[audit] %s started camera on agent %s", op.ip, a.info.ID)
+				case protocol.MsgCameraStop:
+					log.Printf("[audit] %s stopped camera on agent %s", op.ip, a.info.ID)
+				}
 				a.mu.Lock()
 				a.conn.WriteMessage(websocket.TextMessage, raw)
 				a.mu.Unlock()
 			}
 		}
+	}
+}
+
+func (s *Server) broadcastAgentList() {
+	s.mu.RLock()
+	ops := make([]*operator, 0, len(s.operators))
+	for op := range s.operators {
+		ops = append(ops, op)
+	}
+	s.mu.RUnlock()
+
+	for _, op := range ops {
+		s.sendAgentList(op)
 	}
 }
 

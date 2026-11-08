@@ -32,9 +32,9 @@ const (
 // ─────────────────────────────────────────────────────────────────────────────
 
 func main() {
-	server    := flag.String("server", "", "WebSocket server URL (e.g. wss://example.com)")
-	token     := flag.String("token", "", "Agent authentication token")
-	id        := flag.String("id", "", "Agent ID (defaults to hostname)")
+	server := flag.String("server", "", "WebSocket server URL (e.g. wss://example.com)")
+	token := flag.String("token", "", "Agent authentication token")
+	id := flag.String("id", "", "Agent ID (defaults to hostname)")
 	doInstall := flag.Bool("install", false, "Install as a system service")
 	doUninstall := flag.Bool("uninstall", false, "Uninstall the system service")
 	flag.Parse()

@@ -17,6 +17,10 @@ func NewCamera(onFrame func(string)) *Camera {
 }
 
 func (c *Camera) Start() {
+	winDevice := ""
+	if runtime.GOOS == "windows" {
+		winDevice = windowsCameraDevice()
+	}
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -24,7 +28,7 @@ func (c *Camera) Start() {
 		case <-c.stop:
 			return
 		case <-ticker.C:
-			frame, err := captureFrame()
+			frame, err := captureFrame(winDevice)
 			if err != nil {
 				continue
 			}
@@ -41,8 +45,8 @@ func (c *Camera) Stop() {
 	}
 }
 
-func captureFrame() (string, error) {
-	args := cameraArgs()
+func captureFrame(winDevice string) (string, error) {
+	args := cameraArgs(winDevice)
 	cmd := newCommand("ffmpeg", args...)
 	out, err := cmd.Output()
 	if err != nil {
@@ -51,12 +55,11 @@ func captureFrame() (string, error) {
 	return base64.StdEncoding.EncodeToString(out), nil
 }
 
-func cameraArgs() []string {
+func cameraArgs(winDevice string) []string {
 	base := []string{"-loglevel", "quiet", "-vframes", "1", "-f", "image2", "-vcodec", "mjpeg", "pipe:1"}
 	switch runtime.GOOS {
 	case "windows":
-		device := windowsCameraDevice()
-		return append([]string{"-f", "dshow", "-i", "video=" + device}, base...)
+		return append([]string{"-f", "dshow", "-i", "video=" + winDevice}, base...)
 	case "linux":
 		return append([]string{"-f", "v4l2", "-i", "/dev/video0"}, base...)
 	default: // darwin
