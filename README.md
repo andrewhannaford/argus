@@ -137,7 +137,7 @@ Connected agents appear in the sidebar. Select one to open a shell, take a scree
 
 ## Building from Source
 
-Requires Go 1.21+.
+Requires Go 1.26+.
 
 ```bash
 # All platforms
