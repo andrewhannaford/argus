@@ -1,0 +1,13 @@
+.git
+.gitignore
+.dockerignore
+dist
+*.exe
+agent.exe
+server.exe
+deploy
+.env
+.env.example
+README.md
+Dockerfile
+docker-compose.yml

@@ -1,0 +1,34 @@
+services:
+  argus:
+    build: .
+    image: argus:latest
+    container_name: argus
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      AGENT_TOKEN: ${ARGUS_AGENT_TOKEN}
+      OPERATOR_PASSWORD: ${ARGUS_OPERATOR_PASSWORD}
+    networks: [traefik-net]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-net
+      - traefik.http.routers.argus.rule=Host(`argus.lanarchy.net`)
+      - traefik.http.routers.argus.entrypoints=websecure,public
+      - traefik.http.routers.argus.middlewares=error-pages@file,pocketid-oidc-argus@file
+      - traefik.http.routers.argus.tls=true
+      - traefik.http.routers.argus.tls.certresolver=le
+      - traefik.http.services.argus.loadbalancer.server.port=8080
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  traefik-net:
+    external: true
+    name: traefik-net

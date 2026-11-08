@@ -2,8 +2,8 @@
 
 C2 framework with WebSocket agent — shell, screenshot, and camera capture. Agents install as persistent system services and resist termination.
 
-**Server:** Deploy on AWS EC2 using scripts in `deploy/`  
-**Operator UI:** Access via HTTPS at your deployed domain (login with operator password)
+**Server:** Docker container on the homelab (`docker-svc`) behind Traefik + Pocket ID OIDC
+**Operator UI:** `https://argus.lanarchy.net` (login with the operator password)
 
 ---
 
@@ -11,9 +11,9 @@ C2 framework with WebSocket agent — shell, screenshot, and camera capture. Age
 
 ### Prerequisites
 
-- **Server URL:** `wss://your-domain.com` (set during deployment in `deploy/config`)
+- **Server URL:** `wss://argus.lanarchy.net`
 - **Agent token:** retrieve from the operator UI after server deployment
-- The install command is the same on all platforms — replace the URL and token placeholders below
+- The install command is the same on all platforms — replace the token placeholder below
 
 ---
 
@@ -28,7 +28,7 @@ cd argus
 
 # Install as a Windows service
 .\dist\agent-windows-amd64.exe --install `
-  --server wss://your-domain.com `
+  --server wss://argus.lanarchy.net `
   --token <AGENT_TOKEN>
 ```
 
@@ -59,7 +59,7 @@ git clone https://github.com/andrewhannaford/argus.git
 cd argus
 
 sudo ./dist/agent-linux-amd64 --install \
-  --server wss://your-domain.com \
+  --server wss://argus.lanarchy.net \
   --token <AGENT_TOKEN>
 ```
 
@@ -95,7 +95,7 @@ cd argus
 xattr -d com.apple.quarantine dist/agent-darwin-arm64 2>/dev/null || true
 
 sudo ./dist/agent-darwin-arm64 --install \
-  --server wss://your-domain.com \
+  --server wss://argus.lanarchy.net \
   --token <AGENT_TOKEN>
 ```
 
@@ -129,7 +129,7 @@ By default the agent registers using the machine hostname. Override with `--id`:
 
 ## Operator UI
 
-Open `https://your-domain.com` in a browser (the domain you set in `deploy/config`). Log in with the operator password you created during deployment.
+Open `https://argus.lanarchy.net` in a browser. Log in with the operator password you created during deployment.
 
 Connected agents appear in the sidebar. Select one to open a shell, take a screenshot, or start the camera feed.
 
@@ -146,21 +146,27 @@ GOOS=linux   GOARCH=amd64 go build -ldflags "-s -w" -o dist/agent-linux-amd64  .
 GOOS=darwin  GOARCH=amd64 go build -ldflags "-s -w" -o dist/agent-darwin-amd64 ./cmd/agent/
 GOOS=darwin  GOARCH=arm64 go build -ldflags "-s -w" -o dist/agent-darwin-arm64 ./cmd/agent/
 
-# Server (Linux deploy target)
-GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o deploy/server ./cmd/server/
+# Server: built by the Dockerfile (see Server Deployment), not by this list.
 ```
 
 ---
 
 ## Server Deployment
 
-See `deploy/` for AWS provisioning scripts:
+The server runs on the homelab docker host (`docker-svc`) as its own Compose
+project, built from the repo `Dockerfile` and served through Traefik + Pocket ID
+OIDC at `argus.lanarchy.net`. Traefik labels live in `docker-compose.yml`.
 
-1. Copy `deploy/config.example` to `deploy/config`
-2. Edit `deploy/config` with your domain, email, and AWS region
-3. Run deployment scripts in order:
-   - `bash deploy/provision.sh` — creates EC2 instance and allocates Elastic IP
-   - `bash deploy/setup-server.sh` — configures nginx, TLS, and systemd
-   - `bash deploy/deploy-binary.sh` — builds and deploys the server binary
+1. Put the source plus `Dockerfile`, `docker-compose.yml` and a real `.env` in
+   `/opt/docker/services/argus/` on `docker-svc` (see `.env.example` for the two
+   required secrets: `ARGUS_AGENT_TOKEN` and `ARGUS_OPERATOR_PASSWORD`).
 
-Keep `deploy/config` out of version control (it's in `.gitignore`). The deployment scripts will template your domain and email into the config files automatically.
+2. Build and start:
+
+   ```bash
+   cd /opt/docker/services/argus
+   docker compose build
+   docker compose up -d
+   ```
+
+`.env` is not committed (it's gitignored).

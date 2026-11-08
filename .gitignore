@@ -3,6 +3,10 @@
 *.so
 *.dylib
 
+# Local Windows build outputs (dist/ release builds are tracked intentionally)
+/agent.exe
+/server.exe
+
 # Build artifacts
 /bin/
 
@@ -18,3 +22,6 @@ Thumbs.db
 # Logs / output
 *.log
 *.txt
+
+# Secrets
+.env
